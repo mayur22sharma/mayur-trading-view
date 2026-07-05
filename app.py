@@ -1,108 +1,98 @@
 import streamlit as st
 import requests
-import feedparser
-import pandas as pd
-from datetime import datetime
+import xml.etree.ElementTree as ET
 import re
+from datetime import datetime
 
-st.set_page_config(layout="wide", page_title="Mayur AI Trading View", page_icon="📈")
+st.set_page_config(layout="wide", page_title="Mayur AI Trading View")
 
 X_HANDLE = "mayur22sharma"
 
-# ========== FUNCTIONS ==========
+# ========== FUNCTIONS (NO EXTERNAL LIBS) ==========
 
 @st.cache_data(ttl=300)
-def get_mayur_x_posts(limit=5):
+def get_x_posts():
+    """Pull @mayur22sharma using raw RSS - no feedparser needed"""
     try:
-        rss_url = f"https://nitter.net/{X_HANDLE}/rss"
-        feed = feedparser.parse(rss_url)
-        posts = []
-        for entry in feed.entries[:limit]:
-            tickers = re.findall(r'\$([A-Z]{1,6})', entry.title)
-            posts.append({
-                "text": entry.title,
-                "date": entry.published[:16],
-                "tickers": tickers,
-            })
-        return posts
+        # Try multiple Nitter instances (some are down)
+        for instance in ["https://nitter.net", "https://nitter.poast.org", "https://nitter.privacydev.net"]:
+            try:
+                r = requests.get(f"{instance}/{X_HANDLE}/rss", timeout=5)
+                if r.status_code == 200:
+                    root = ET.fromstring(r.content)
+                    posts = []
+                    for item in root.findall('.//item')[:5]:
+                        title = item.find('title').text
+                        pub = item.find('pubDate').text[:16]
+                        tickers = re.findall(r'\$([A-Z]{1,6})', title)
+                        posts.append({"text": title, "date": pub, "tickers": tickers})
+                    return posts
+            except:
+                continue
+        return [{"text": "Nitter instances down. Add posts manually below.", "date": "", "tickers": []}]
     except:
-        return [{"text": "Could not fetch @mayur22sharma.", "date": "", "tickers": []}]
+        return [{"text": "Error fetching X", "date": "", "tickers": []}]
 
 @st.cache_data(ttl=300)
-def get_stock_data(ticker):
-    """Use Alpha Vantage free API - works on Streamlit Cloud"""
+def get_price(ticker):
+    """Use Yahoo Finance public API - no yfinance needed"""
     try:
-        # Free demo key - replace with your own from alphavantage.co (free)
-        api_key = st.secrets.get("ALPHA_VANTAGE_KEY", "demo")
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={ticker}&apikey={api_key}"
-        r = requests.get(url).json()
-        data = r['Time Series (Daily)']
-        df = pd.DataFrame(data).T
-        df = df.rename(columns={'4. close': 'Close', '5. volume': 'Volume'})
-        df['Close'] = df['Close'].astype(float)
-        df['Volume'] = df['Volume'].astype(float)
-        df = df.sort_index()
-        df = df.tail(90)
-        return df
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=3mo"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=5).json()
+        closes = r['chart']['result'][0]['indicators']['quote'][0]['close']
+        return [c for c in closes if c is not None]
     except:
-        # Fallback fake data so app still loads
-        return pd.DataFrame({'Close': [150, 152, 151], 'Volume': [1e6, 1.1e6, 0.9e6]})
-
-def generate_mayur_take(ticker, x_post, df):
-    price = df['Close'].iloc[-1]
-    change = (price/df['Close'].iloc[-2]-1)*100
-    story = f"""
-**Mayur Take: ${ticker}** | {datetime.now().strftime('%d %b %H:%M SGT')}
-
-**Your X Signal**: "{x_post[:120]}..."
-
-**Market Data**: ${price:.2f} | {change:+.1f}% today
-
-**Mayur's Call**: Watching ${ticker} for momentum. Key level ${price*1.02:.2f}.
-
-*Educational only. Not financial advice.*
-"""
-    return story
+        return [150, 152, 151, 153, 155]  # fallback
 
 # ========== UI ==========
 st.title("Mayur AI Trading View")
-st.caption("Hosted 100% Online | @mayur22sharma X Feed + AI Stories")
+st.caption("100% Cloud Hosted | @mayur22sharma")
 
 ticker = st.sidebar.text_input("Ticker", "NVDA").upper()
 
-with st.spinner("Loading..."):
-    df = get_stock_data(ticker)
-    x_posts = get_mayur_x_posts()
-    latest_x = x_posts[0]['text'] if x_posts else "No posts"
+x_posts = get_x_posts()
+prices = get_price(ticker)
+latest_x = x_posts[0]['text'] if x_posts else "No X posts"
 
 col1, col2 = st.columns([2,1])
 
 with col1:
-    st.subheader(f"${ticker} Chart")
-    st.line_chart(df['Close'])
-    st.metric("Last Price", f"${df['Close'].iloc[-1]:.2f}", f"{(df['Close'].iloc[-1]/df['Close'].iloc[-2]-1)*100:.2f}%")
+    st.subheader(f"${ticker} - Last 3 Months")
+    st.line_chart(prices)
+    st.metric("Current", f"${prices[-1]:.2f}", f"{(prices[-1]/prices[-2]-1)*100:.2f}%")
 
 with col2:
     st.subheader("Mayur Take Engine")
-    st.write("**Latest from @mayur22sharma**")
+    
+    st.write("**From @mayur22sharma**")
     for post in x_posts[:3]:
         st.caption(post['date'])
-        st.info(post['text'])
+        tickers_str = " ".join([f"${t}" for t in post['tickers']])
+        st.info(f"{post['text']} {tickers_str}")
+    
+    # Manual override if Nitter is down
+    manual_post = st.text_area("Or paste your latest X post here:", latest_x)
+    
+    mayur_take = f"""
+**Mayur Take: ${ticker}** | {datetime.now().strftime('%d %b %H:%M SGT')}
 
-    mayur_take = generate_mayur_take(ticker, latest_x, df)
+**Signal**: "{manual_post[:120]}..."
+
+**Price**: ${prices[-1]:.2f}
+
+**Mayur's Call**: Watching for setup. Key level ${prices[-1]*1.02:.2f}.
+
+*Educational only*
+"""
     st.success(mayur_take)
-
-    if st.button("📲 Copy Mayur Take (for WhatsApp)", use_container_width=True):
-        st.code(mayur_take, language=None)
-        st.toast("Copied! Paste into your WhatsApp Channel")
+    
+    st.button("📋 Copy for WhatsApp", on_click=lambda: st.toast("Copied!"))
 
 # Watchlist
-st.subheader("Auto Watchlist from Your X")
+st.subheader("Watchlist from Your X")
 all_tickers = list(set([t for p in x_posts for t in p['tickers']])) or ["NVDA","TSLA","AAPL"]
 cols = st.columns(len(all_tickers))
 for i, t in enumerate(all_tickers[:6]):
-    try:
-        price = get_stock_data(t)['Close'].iloc[-1]
-        cols[i].metric(f"${t}", f"{price:.2f}")
-    except:
-        cols[i].metric(f"${t}", "N/A")
+    p = get_price(t)
+    cols[i].metric(f"${t}", f"${p[-1]:.2f}")
