@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # PASTE YOUR NEW TOKEN HERE AFTER YOU REVOKED THE OLD ONE
-TOKEN = os.getenv("TELEGRAM_TOKEN") or "PASTE_NEW_TOKEN_HERE"
+TOKEN = os.getenv("TELEGRAM_TOKEN") or "8715945496:AAHfhfZuk8B9veFv7pQwrPkKC7Xnw4UkCCY"
 
 X_HANDLE = "mayur22sharma"
 
